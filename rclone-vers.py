@@ -10,19 +10,31 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from datetime import datetime
 
+from typing import TYPE_CHECKING, List, Optional
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 RCLONE = '/usr/bin/rclone'
 DT_FMT = '%Y-%m-%d-%H%M%S'
+__version__ = '0.1.1'
 
 
 @dataclass
 class VersionItem:
+    """
+    This is a convenience class to hold the data related to remote versioned
+    files
+    """
     path: str
     fname: str
     dt: datetime
 
 
-def get_args():
+def get_args() -> 'Namespace':
+    """
+    Get the CLI args
+    """
     desc = 'This will allow you to, given a path to a file, decrypt an older ' \
         'version of the file'
     p = ArgumentParser(
@@ -42,21 +54,31 @@ def get_args():
         help='The directory to put the unencrypted file in')
     p.add_argument('-a', '--all-versions', action='store_true', default=False,
         help='Instead of prompting for which version to get, just get all '
-        'previous versions')
+        'previous versions (note that the *current* version will not be '
+        'downloaded)')
+    p.add_argument('-V', '--version', action='store_true', default=False,
+        help='Print the version and exit')
     p.add_argument('-D', '--debug', action='store_true', default=False,
         help='Add debug output')
-    p.add_argument('fname', help='The file to get an older version of')
+    p.add_argument('fname', nargs='?',
+        help='The file to get an older version of')
 
     args = p.parse_args()
 
-    if args.fname.startswith('/'):
+    if not args.version and not args.fname:
+        p.error('You must supply a local filename')
+
+    if not args.version and args.fname.startswith('/'):
         # Strip the leading / for compatability with the rclone output
         args.fname = args.fname[1:]
 
     return args
 
 
-def setup_logging(args):
+def setup_logging(args: 'Namespace') -> None:
+    """
+    This sets up default logging behavior
+    """
     level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         format=(
@@ -67,14 +89,23 @@ def setup_logging(args):
     )
 
 
-def get_conf(args):
+def get_conf(args: 'Namespace') -> ConfigParser:
+    """
+    Read in the specified rclone config and return the config object
+    """
     conf = ConfigParser()
     conf.read(args.rclone_conf)
 
     return conf
 
 
-def get_enc_fname(conf, args):
+def get_enc_fname(conf: ConfigParser, args: 'Namespace') -> str:
+    """
+    This will scan for a file match based on the given local filename
+    and return the encrypted path for it.
+
+    TODO: I think this can be greatly optimized.
+    """
     regex = re.compile(r'NOTICE: ' + args.fname + r': Encrypts to "([^"]+)"')
     cmd = [RCLONE, '-v', '--crypt-show-mapping', 'ls', f'{args.crypt_remote}:']
     logging.debug(f'Running command: {" ".join(cmd)}')
@@ -93,7 +124,16 @@ def get_enc_fname(conf, args):
     return ret
 
 
-def get_version_list(enc_fname, conf, args):
+def get_version_list(
+    enc_fname: str,
+    conf: ConfigParser,
+    args: 'Namespace',
+) -> List[VersionItem]:
+    """
+    This gets the list of versioned items for the given file
+
+    TODO: I think this can also be optimized
+    """
     # Get the date and time of the version
     regex = re.compile(r'\s(' + enc_fname + r'-v(\d{4}-\d+-\d+-\d+)-\d+)')
     cmd = [RCLONE, '--b2-versions', 'ls', conf[args.crypt_remote]['remote']]
@@ -126,7 +166,7 @@ def get_version_list(enc_fname, conf, args):
     return ret
 
 
-def prompt4vers(versions):
+def prompt4vers(versions: List[VersionItem]) -> VersionItem:
     """
     Return the the obj matching the version selected
     """
@@ -153,14 +193,23 @@ def prompt4vers(versions):
         return versions[sel - 1]
 
 
-def get_loc_enc_dest(conf, args):
+def get_loc_enc_dest(conf: ConfigParser, args: 'Namespace') -> str:
+    """
+    A shortcut function that pulls the temp directory from the rclone
+    config for the local config
+    """
     return conf[args.crypt_local]['remote'].split(':')[1]
 
 
-def process_file(vi, conf, args):
+def process_file(
+    vi: VersionItem,
+    conf: ConfigParser,
+    args: 'Namespace',
+) -> Optional[str]:
     """
-    Need to make some filename changes and then unencrypt the file to a version
-    name
+    This will make some  filename changes and then unencrypt the file to
+    a versioned name in the specified outdir. It also cleans up the encrypted
+    file from the temp dir.
     """
     # Setup some variables for path names and such
     enc_dest = get_loc_enc_dest(conf, args)
@@ -200,7 +249,15 @@ def process_file(vi, conf, args):
     return unenc_final_path
 
 
-def get_versions(versions, conf, args):
+def get_versions(
+    versions: List[VersionItem],
+    conf: ConfigParser,
+    args: 'Namespace',
+) -> None:
+    """
+    Given the list of versions to download, this will download them
+    to the outdir with their filename-timestamp
+    """
     enc_dest = get_loc_enc_dest(conf, args)
     if not os.path.isdir(enc_dest):
         # Create the local dest dir if it doesn't exist
@@ -221,9 +278,14 @@ def get_versions(versions, conf, args):
                 logging.info(f'Versioned file saved to: {path}')
 
 
-def main():
+def main() -> int:
     args = get_args()
+    breakpoint()
     setup_logging(args)
+
+    if args.version:
+        print(f'{os.path.basename(__file__)}: {__version__}')
+        return 0
 
     rcconf = get_conf(args)
     if args.enc_fname:
