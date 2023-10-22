@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 RCLONE = '/usr/bin/rclone'
 DT_FMT = '%Y-%m-%d-%H%M%S'
-__version__ = '0.1.1'
+__version__ = '0.2.0'
 
 
 @dataclass
@@ -100,43 +100,62 @@ def get_conf(args: 'Namespace') -> ConfigParser:
 
 
 def get_enc_fname(conf: ConfigParser, args: 'Namespace') -> str:
-    """
-    This will scan for a file match based on the given local filename
-    and return the encrypted path for it.
 
-    TODO: I think this can be greatly optimized.
-    """
-    regex = re.compile(r'NOTICE: ' + args.fname + r': Encrypts to "([^"]+)"')
-    cmd = [RCLONE, '-v', '--crypt-show-mapping', 'ls', f'{args.crypt_remote}:']
-    logging.debug(f'Running command: {" ".join(cmd)}')
-    p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, encoding='utf-8',
-        errors='ignore')
+    # First, we need to split the input file path so we can quickly build
+    # the path to our target file
+    loc_parts = args.fname.split('/')
+    cmd_base = [RCLONE, '-v', '--crypt-show-mapping', 'lsd']
+    rem_base = f'{args.crypt_remote}:'
 
-    ret = ''
-    for line in p.stdout:
-        if m := regex.search(line):
-            ret = m.group(1)
+    enc_path = ''
+    num_parts = len(loc_parts)
+    # We never need to run against the actual leaf
+    for i, ppart in enumerate(loc_parts):
+        if i == 0:
+            # We are checking the root, which is just the bare base
+            cmd = cmd_base + [rem_base]
+        elif i == num_parts:
+            # We won't actually run anything against the leaf as we already
+            # have its name, just break.  This is setup with the zero
+            # check first to handle the case of a file at the root of the
+            # bucket
             break
+        else:
+            # We're checking an intermediate
+            cmd = cmd_base + [f'{rem_base}{os.path.join(*loc_parts[:i])}']
 
-    if p.poll() is None:
-        p.terminate()
+        # We have our command, let's run it and get the enc name for what
+        # we need
+        regex = re.compile(r'NOTICE: ' + loc_parts[i] +
+            r': Encrypts to "([^"]+)"')
+        logging.debug(f'Running command: {" ".join(cmd)}')
+        p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, encoding='utf-8',
+            errors='ignore')
 
-    return ret
+        for line in p.stdout:
+            if m := regex.search(line):
+                enc_path = os.path.join(enc_path, m.group(1))
+                break
+
+        if p.poll() is None:
+            p.terminate()
+
+    return enc_path
 
 
 def get_version_list(
-    enc_fname: str,
+    enc_path: str,
     conf: ConfigParser,
     args: 'Namespace',
 ) -> List[VersionItem]:
     """
     This gets the list of versioned items for the given file
-
-    TODO: I think this can also be optimized
     """
     # Get the date and time of the version
+    enc_dir, enc_fname = os.path.split(enc_path)
     regex = re.compile(r'\s(' + enc_fname + r'-v(\d{4}-\d+-\d+-\d+)-\d+)')
-    cmd = [RCLONE, '--b2-versions', 'ls', conf[args.crypt_remote]['remote']]
+    rem = f'{conf[args.crypt_remote]["remote"]}/{enc_dir}'
+    cmd = [RCLONE, '--b2-versions', 'ls', rem]
     p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, encoding='utf-8',
         errors='ignore')
 
@@ -153,8 +172,8 @@ def get_version_list(
             if m := regex.search(line):
                 # We have a version, process it
                 ret.append(VersionItem(
-                    path=m.group(1),
-                    fname=os.path.basename(m.group(1)),
+                    path=os.path.join(enc_dir, m.group(1)),
+                    fname=m.group(1),
                     dt=datetime.strptime(m.group(2), DT_FMT),
                 ))
             else:
@@ -280,7 +299,6 @@ def get_versions(
 
 def main() -> int:
     args = get_args()
-    breakpoint()
     setup_logging(args)
 
     if args.version:
