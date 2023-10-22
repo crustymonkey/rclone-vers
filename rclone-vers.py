@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 RCLONE = '/usr/bin/rclone'
 DT_FMT = '%Y-%m-%d-%H%M%S'
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 
 @dataclass
@@ -100,7 +100,10 @@ def get_conf(args: 'Namespace') -> ConfigParser:
 
 
 def get_enc_fname(conf: ConfigParser, args: 'Namespace') -> str:
-
+    """
+    This recurses through the given path to build up the full path
+    in its encrypted form and returns the full encrypted path
+    """
     # First, we need to split the input file path so we can quickly build
     # the path to our target file
     loc_parts = args.fname.split('/')
@@ -116,7 +119,7 @@ def get_enc_fname(conf: ConfigParser, args: 'Namespace') -> str:
             cmd = cmd_base + [rem_base]
         elif i == num_parts:
             # We won't actually run anything against the leaf as we already
-            # have its name, just break.  This is setup with the zero
+            # have its name, so we just break.  This is setup with the zero
             # check first to handle the case of a file at the root of the
             # bucket
             break
