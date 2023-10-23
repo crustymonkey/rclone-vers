@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 RCLONE = '/usr/bin/rclone'
 DT_FMT = '%Y-%m-%d-%H%M%S'
-__version__ = '0.2.1'
+__version__ = '0.2.2'
 
 
 @dataclass
@@ -48,8 +48,6 @@ def get_args() -> 'Namespace':
         help='The name of the default encrypted remote from the rclone conf')
     p.add_argument('-l', '--crypt-local', default='local-crypt',
         help='The configuration for local enc. from the rclone.conf')
-    p.add_argument('-e', '--enc-fname', help='You can optionally shortcut the '
-        'search process by passing in the encrypted filename path')
     p.add_argument('-o', '--outdir', default='./',
         help='The directory to put the unencrypted file in')
     p.add_argument('-a', '--all-versions', action='store_true', default=False,
@@ -104,46 +102,13 @@ def get_enc_fname(conf: ConfigParser, args: 'Namespace') -> str:
     This recurses through the given path to build up the full path
     in its encrypted form and returns the full encrypted path
     """
-    # First, we need to split the input file path so we can quickly build
-    # the path to our target file
-    loc_parts = args.fname.split('/')
-    cmd_base = [RCLONE, '-v', '--crypt-show-mapping', 'lsd']
-    rem_base = f'{args.crypt_remote}:'
+    cmd = [RCLONE, 'cryptdecode', '--reverse', f'{args.crypt_remote}:',
+        args.fname]
+    logging.debug(r'Running command {" ".join(cmd)}')
+    p = sp.run(cmd, stdout=sp.PIPE, check=True, encoding='utf-8',
+        errors='ignore')
 
-    enc_path = ''
-    num_parts = len(loc_parts)
-    # We never need to run against the actual leaf
-    for i, ppart in enumerate(loc_parts):
-        if i == 0:
-            # We are checking the root, which is just the bare base
-            cmd = cmd_base + [rem_base]
-        elif i == num_parts:
-            # We won't actually run anything against the leaf as we already
-            # have its name, so we just break.  This is setup with the zero
-            # check first to handle the case of a file at the root of the
-            # bucket
-            break
-        else:
-            # We're checking an intermediate
-            cmd = cmd_base + [f'{rem_base}{os.path.join(*loc_parts[:i])}']
-
-        # We have our command, let's run it and get the enc name for what
-        # we need
-        regex = re.compile(r'NOTICE: ' + loc_parts[i] +
-            r': Encrypts to "([^"]+)"')
-        logging.debug(f'Running command: {" ".join(cmd)}')
-        p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, encoding='utf-8',
-            errors='ignore')
-
-        for line in p.stdout:
-            if m := regex.search(line):
-                enc_path = os.path.join(enc_path, m.group(1))
-                break
-
-        if p.poll() is None:
-            p.terminate()
-
-    return enc_path
+    return p.stdout.split()[1].lstrip('/')
 
 
 def get_version_list(
@@ -309,11 +274,7 @@ def main() -> int:
         return 0
 
     rcconf = get_conf(args)
-    if args.enc_fname:
-        enc_fname = args.enc_fname
-    else:
-        enc_fname = get_enc_fname(rcconf, args)
-    logging.debug(f'Found encrypted filename for {args.fname}: {enc_fname}')
+    enc_fname = args.enc_fname
 
     versions = get_version_list(enc_fname, rcconf, args)
     logging.debug('Found encrypted file versions at times: '
