@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 RCLONE = '/usr/bin/rclone'
 DT_FMT = '%Y-%m-%d-%H%M%S'
-__version__ = '0.2.2'
+__version__ = '0.2.3'
 
 
 @dataclass
@@ -165,19 +165,19 @@ def prompt4vers(versions: List[VersionItem]) -> VersionItem:
         sel = input('Which version?  ')
         # Get the version and verify the input
         try:
-            sel = int(sel.strip())
+            seli = int(sel.strip())
         except Exception:
             print('You must enter a number, try again\n')
             continue
 
-        if sel < 1 or sel > len(versions):
+        if seli < 1 or seli > len(versions):
             print(f'Invalid selection "{sel}", try again\n')
             continue
 
-        logging.debug(f'Version selected: {versions[sel - 1].dt}')
+        logging.debug(f'Version selected: {versions[seli - 1].dt}')
 
         # We have a good selection, return it
-        return versions[sel - 1]
+        return versions[seli - 1]
 
 
 def get_loc_enc_dest(conf: ConfigParser, args: 'Namespace') -> str:
